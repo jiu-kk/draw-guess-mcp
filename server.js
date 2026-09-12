@@ -43,7 +43,7 @@ function strokesToSvg(strokes) {
 const TOOLS = [
   {
     name: "draw_start",
-    description: "开始一局你画我猜。传入真实答案、线条数组或 SVG，以及可接受的同义答案和出题者。",
+    description: "开始一局你画我猜（AI 出题）。传入真实答案、线条数组或 SVG，以及可接受的同义答案和出题者。",
     inputSchema: {
       type: "object",
       properties: {
@@ -58,7 +58,7 @@ const TOOLS = [
   },
   {
     name: "draw_status",
-    description: "查看当前画作。返回画布尺寸、SVG、ASCII 网格和简短说明，不返回答案。",
+    description: "查看当前画作。返回画布尺寸、SVG、出题者，不返回答案。",
     inputSchema: { type: "object", properties: {} }
   },
   {
@@ -83,7 +83,7 @@ app.post("/mcp", (req, res) => {
     return res.json(jsonrpc(id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "draw-guess", version: "1.3.0" }
+      serverInfo: { name: "draw-guess", version: "1.4.0" }
     }));
   }
   if (method === "tools/list") return res.json(jsonrpc(id, { tools: TOOLS }));
@@ -155,10 +155,20 @@ app.post("/guess", (req, res) => {
 app.post("/draw", (req, res) => {
   const strokes = req.body?.strokes || [];
   const who = req.body?.who || "澳澳";
+  const answer = String(req.body?.answer || "").trim();
   round = {
-    answer: "", aliases: [], artist: who, svg: strokesToSvg(strokes),
-    created_at: new Date().toISOString(), guesses: [], solved: false
+    answer,
+    aliases: [],
+    artist: who,
+    svg: strokesToSvg(strokes),
+    created_at: new Date().toISOString(),
+    guesses: [],
+    solved: false
   };
+  if (answer) {
+    history.unshift({ answer, artist: who, at: round.created_at });
+    history = history.slice(0, 50);
+  }
   res.json({ ok: true });
 });
 
@@ -234,8 +244,12 @@ app.get("/", (req, res) => {
     <button class="btn" onclick="clearCanvas()">清空</button>
   </div>
 
-  <div class="row" id="drawRow" style="display:none">
-    <button class="btn primary" onclick="submitDraw()">我画好了 ✓</button>
+  <div id="drawRow" style="display:none">
+    <div class="label">答案（只有你自己知道，江玖猜完才能看）</div>
+    <input id="answerInput" placeholder="画的是什么？填在这里…">
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" onclick="submitDraw()">我画好了 ✓</button>
+    </div>
   </div>
 
   <div class="row">
@@ -338,7 +352,7 @@ function togglePen() {
   const b = document.getElementById('penBtn');
   b.classList.toggle('on', penMode);
   b.textContent = penMode ? '✏️ 画板已开' : '✏️ 我来画';
-  document.getElementById('drawRow').style.display = penMode ? 'flex' : 'none';
+  document.getElementById('drawRow').style.display = penMode ? 'block' : 'none';
   document.getElementById('colors').style.display = penMode ? 'flex' : 'none';
   document.getElementById('canvasLabel').textContent = penMode ? '画板（用手指画）' : '画板';
   if (penMode) { strokes = []; eraseMode = false; renderLocal(); buildColors(); }
@@ -348,10 +362,12 @@ function clearCanvas() { strokes = []; renderLocal(); }
 
 async function submitDraw() {
   if (!strokes.length) { alert('还没画呢'); return; }
+  const answer = document.getElementById('answerInput').value.trim();
+  if (!answer) { alert('填一下答案，不然江玖猜不了'); return; }
   await fetch('/draw', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ strokes, who:'澳澳' })
+    body: JSON.stringify({ strokes, who:'澳澳', answer })
   });
   penMode = false;
   document.getElementById('penBtn').classList.remove('on');
@@ -359,6 +375,7 @@ async function submitDraw() {
   document.getElementById('drawRow').style.display = 'none';
   document.getElementById('colors').style.display = 'none';
   document.getElementById('canvasLabel').textContent = '画板';
+  document.getElementById('answerInput').value = '';
   document.getElementById('msg').textContent = '画好了，等江玖来猜～';
   refresh();
 }
