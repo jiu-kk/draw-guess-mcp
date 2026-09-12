@@ -40,7 +40,6 @@ function strokesToSvg(strokes) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}"><rect width="${CANVAS_W}" height="${CANVAS_H}" rx="20" fill="#fffafc"/>${paths}</svg>`;
 }
 
-// ---------- MCP ----------
 const TOOLS = [
   {
     name: "draw_start",
@@ -76,9 +75,7 @@ const TOOLS = [
   }
 ];
 
-function jsonrpc(id, result) {
-  return { jsonrpc: "2.0", id, result };
-}
+function jsonrpc(id, result) { return { jsonrpc: "2.0", id, result }; }
 
 app.post("/mcp", (req, res) => {
   const { id, method, params } = req.body || {};
@@ -86,12 +83,10 @@ app.post("/mcp", (req, res) => {
     return res.json(jsonrpc(id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "draw-guess", version: "1.2.0" }
+      serverInfo: { name: "draw-guess", version: "1.3.0" }
     }));
   }
-  if (method === "tools/list") {
-    return res.json(jsonrpc(id, { tools: TOOLS }));
-  }
+  if (method === "tools/list") return res.json(jsonrpc(id, { tools: TOOLS }));
   if (method === "tools/call") {
     const name = params?.name;
     const args = params?.arguments || {};
@@ -135,15 +130,9 @@ app.post("/mcp", (req, res) => {
   return res.json(jsonrpc(id, { content: [{ type: "text", text: "ok" }] }));
 });
 
-// ---------- 前端接口 ----------
 app.get("/state", (req, res) => {
   res.json({
-    current: round ? {
-      artist: round.artist,
-      svg: round.svg,
-      solved: round.solved,
-      guesses: round.guesses
-    } : null,
+    current: round ? { artist: round.artist, svg: round.svg, solved: round.solved, guesses: round.guesses } : null,
     history,
     scores
   });
@@ -166,15 +155,9 @@ app.post("/guess", (req, res) => {
 app.post("/draw", (req, res) => {
   const strokes = req.body?.strokes || [];
   const who = req.body?.who || "澳澳";
-  const svg = strokesToSvg(strokes);
   round = {
-    answer: "",
-    aliases: [],
-    artist: who,
-    svg,
-    created_at: new Date().toISOString(),
-    guesses: [],
-    solved: false
+    answer: "", aliases: [], artist: who, svg: strokesToSvg(strokes),
+    created_at: new Date().toISOString(), guesses: [], solved: false
   };
   res.json({ ok: true });
 });
@@ -202,9 +185,10 @@ app.get("/", (req, res) => {
   h1 small { display:block; font-size:10px; letter-spacing:3px; color:#c9a8bb; font-weight:400; margin-top:3px; }
   .score { display:flex; justify-content:center; gap:18px; font-size:13px; color:#a97e97; margin-bottom:14px; }
   .score b { color:#8a5f7a; font-size:16px; }
-  .canvas { width:100%; aspect-ratio:10/7; border-radius:16px; background:#fffafc; border:1px solid #f4e3ec; overflow:hidden; position:relative; touch-action:none; }
-  .canvas svg { width:100%; height:100%; display:block; }
-  .empty { display:flex; align-items:center; justify-content:center; height:100%; color:#d2bccb; font-size:13px; }
+  .canvasWrap { position:relative; width:100%; aspect-ratio:10/7; border-radius:16px; background:#fffafc; border:1px solid #f4e3ec; overflow:hidden; }
+  .canvasWrap svg { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .drawLayer { position:absolute; inset:0; z-index:5; touch-action:none; }
+  .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#d2bccb; font-size:13px; }
   .row { display:flex; gap:8px; margin-bottom:10px; }
   .btn { flex:1; border:none; border-radius:14px; padding:12px; font-size:13px; background:#fff; color:#a97e97; box-shadow:0 3px 12px rgba(200,150,180,.14); }
   .btn:active { transform:scale(.98); }
@@ -221,7 +205,6 @@ app.get("/", (req, res) => {
   .colors { display:flex; gap:8px; align-items:center; justify-content:center; margin-bottom:10px; }
   .swatch { width:28px; height:28px; border-radius:50%; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.12); }
   .swatch.sel { border-color:#8a5f7a; transform:scale(1.15); }
-  .tools { display:flex; gap:8px; margin-bottom:10px; }
 </style>
 </head>
 <body>
@@ -235,12 +218,14 @@ app.get("/", (req, res) => {
 
   <div class="card">
     <div class="label" id="canvasLabel">画板</div>
-    <div class="canvas" id="canvas"><div class="empty">还没有画</div></div>
+    <div class="canvasWrap" id="canvasWrap">
+      <div id="svgBox"></div>
+      <div class="empty" id="emptyTip">还没有画</div>
+      <div class="drawLayer" id="drawLayer"></div>
+    </div>
   </div>
 
-  <div class="tools" id="toolsRow" style="display:none">
-    <div class="colors" id="colors"></div>
-  </div>
+  <div class="colors" id="colors" style="display:none"></div>
 
   <div class="row">
     <button class="btn" id="penBtn" onclick="togglePen()">✏️ 我来画</button>
@@ -279,9 +264,11 @@ let eraseMode = false;
 let drawing = false;
 let strokes = [];
 let cur = null;
-let curColor = '#333';
+let curColor = '#333333';
 const PALETTE = ['#333333','#e57373','#f0a35e','#f3d34a','#7cc47f','#5aa9e6','#9b7fd4','#e58fc0'];
-const cvs = document.getElementById('canvas');
+const svgBox = document.getElementById('svgBox');
+const drawLayer = document.getElementById('drawLayer');
+const emptyTip = document.getElementById('emptyTip');
 
 function buildColors() {
   const box = document.getElementById('colors');
@@ -307,13 +294,16 @@ function svgFromStrokes(list) {
     const d = s.points.map((p,i) => (i===0?'M':'L') + p[0] + ' ' + p[1]).join(' ');
     paths += '<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="'+s.width+'" stroke-linecap="round" stroke-linejoin="round"/>';
   }
-  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700"><rect width="1000" height="700" rx="20" fill="#fffafc"/>'+paths+'</svg>';
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" preserveAspectRatio="none"><rect width="1000" height="700" fill="#fffafc"/>'+paths+'</svg>';
 }
 
-function renderLocal() { cvs.innerHTML = svgFromStrokes(strokes); }
+function renderLocal() {
+  svgBox.innerHTML = svgFromStrokes(strokes);
+  emptyTip.style.display = strokes.length ? 'none' : 'flex';
+}
 
 function pos(e) {
-  const r = cvs.getBoundingClientRect();
+  const r = drawLayer.getBoundingClientRect();
   const t = e.touches ? e.touches[0] : e;
   return [ (t.clientX - r.left) / r.width * 1000, (t.clientY - r.top) / r.height * 700 ];
 }
@@ -322,7 +312,7 @@ function start(e) {
   if (!penMode) return;
   e.preventDefault();
   drawing = true;
-  cur = { points: [pos(e)], color: eraseMode ? '#fffafc' : curColor, width: eraseMode ? 26 : 5 };
+  cur = { points: [pos(e)], color: eraseMode ? '#fffafc' : curColor, width: eraseMode ? 30 : 5 };
   strokes.push(cur);
   renderLocal();
 }
@@ -334,13 +324,14 @@ function move(e) {
 }
 function end() { if (!drawing) return; drawing = false; cur = null; }
 
-cvs.addEventListener('touchstart', start, {passive:false});
-cvs.addEventListener('touchmove', move, {passive:false});
-cvs.addEventListener('touchend', end);
-cvs.addEventListener('mousedown', start);
-cvs.addEventListener('mousemove', move);
-cvs.addEventListener('mouseup', end);
-cvs.addEventListener('mouseleave', end);
+drawLayer.addEventListener('touchstart', start, {passive:false});
+drawLayer.addEventListener('touchmove', move, {passive:false});
+drawLayer.addEventListener('touchend', end);
+drawLayer.addEventListener('touchcancel', end);
+drawLayer.addEventListener('mousedown', start);
+drawLayer.addEventListener('mousemove', move);
+drawLayer.addEventListener('mouseup', end);
+drawLayer.addEventListener('mouseleave', end);
 
 function togglePen() {
   penMode = !penMode;
@@ -348,7 +339,7 @@ function togglePen() {
   b.classList.toggle('on', penMode);
   b.textContent = penMode ? '✏️ 画板已开' : '✏️ 我来画';
   document.getElementById('drawRow').style.display = penMode ? 'flex' : 'none';
-  document.getElementById('toolsRow').style.display = penMode ? 'flex' : 'none';
+  document.getElementById('colors').style.display = penMode ? 'flex' : 'none';
   document.getElementById('canvasLabel').textContent = penMode ? '画板（用手指画）' : '画板';
   if (penMode) { strokes = []; eraseMode = false; renderLocal(); buildColors(); }
 }
@@ -366,7 +357,7 @@ async function submitDraw() {
   document.getElementById('penBtn').classList.remove('on');
   document.getElementById('penBtn').textContent = '✏️ 我来画';
   document.getElementById('drawRow').style.display = 'none';
-  document.getElementById('toolsRow').style.display = 'none';
+  document.getElementById('colors').style.display = 'none';
   document.getElementById('canvasLabel').textContent = '画板';
   document.getElementById('msg').textContent = '画好了，等江玖来猜～';
   refresh();
@@ -375,8 +366,13 @@ async function submitDraw() {
 async function refresh() {
   if (penMode) return;
   const r = await fetch('/state').then(x => x.json());
-  if (r.current && r.current.svg) cvs.innerHTML = r.current.svg;
-  else cvs.innerHTML = '<div class="empty">还没有画</div>';
+  if (r.current && r.current.svg) {
+    svgBox.innerHTML = r.current.svg;
+    emptyTip.style.display = 'none';
+  } else {
+    svgBox.innerHTML = '';
+    emptyTip.style.display = 'flex';
+  }
   document.getElementById('scoreAo').textContent = (r.scores && r.scores['澳澳']) || 0;
   document.getElementById('scoreJiu').textContent = (r.scores && r.scores['江玖']) || 0;
   const g = document.getElementById('guesses');
